@@ -12,6 +12,7 @@
 #include <time.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include <webp/decode.h>
@@ -22,6 +23,8 @@
 #include "game_assets.h"
 #include "trophies.h"
 #include "i18n.h"
+#include "status.h"
+#include "whatsnew.h"
 #ifdef ENABLE_UPDATER
 #include "updater.h"
 #endif
@@ -1005,6 +1008,12 @@ static void linha_perfil(int x, int y, int w, const char *rotulo, const char *va
     texto(x + w - 22 - wv, y + 27, 19, cor, a, valor);
 }
 
+// Definidos mais abaixo, com as telas de estado e de novidades.
+#define BT_ZL "\xEE\x83\xA6"
+#define BT_ZR "\xEE\x83\xA7"
+static int estado_pode(int i);
+static char *wn_md[2];   // 0 = CHANGELOG.md (pt), 1 = CHANGELOG.en.md (en, também para os demais idiomas)
+
 static void desenhar(int sel, float cs[N], int ultimo, const char *msg, float fade) {
     for (int y = 0; y < H; y++) memcpy(&px[y * pitch], &bg[y * W], W * 4);
     cabecalho();
@@ -1083,7 +1092,7 @@ static void desenhar(int sel, float cs[N], int ultimo, const char *msg, float fa
 
     // botões
     const int yb = 600;
-    int pode = in->nro && in->dump;
+    int pode = estado_pode(sel);
     const char *lbl_jogar = tr("launcher.menu.play");
     const char *lbl_opc = tr("launcher.menu.options");
     rrect(X, yb, 230, 54, 27, pode ? OURO : CINZA_ESC, 255);
@@ -1095,6 +1104,16 @@ static void desenhar(int sel, float cs[N], int ultimo, const char *msg, float fa
     int wo = largura(21, lbl_opc, 0) + 32;
     texto(X + 246 + (200 - wo) / 2, yb + 37, 26, BRANCO, 255, BT_Y);
     texto(X + 246 + (200 - wo) / 2 + 32, yb + 35, 21, BRANCO, 245, lbl_opc);
+    {   // botão da tela de estado (ZR); fica vermelho quando algo impede o jogo de abrir
+        const char *lbl_est = tr("status.button");
+        const int xe = X + 462, we = PW - 462;
+        const int ruim = !estado_pode(sel);
+        rrect(xe, yb, we, 54, 27, ruim ? VERMELHO : PAINEL, ruim ? 60 : 200);
+        rborda(xe, yb, we, 54, 27, 1, ruim ? VERMELHO : OURO_ESC, 255);
+        int wt = largura(18, lbl_est, 0) + 30;
+        texto(xe + (we - wt) / 2, yb + 37, 24, BRANCO, 255, BT_ZR);
+        texto_corte(xe + (we - wt) / 2 + 30, yb + 34, 18, ruim ? BRANCO : CINZA, 245, lbl_est, we - 40);
+    }
     if (msg) texto_sombra(X, 584, 17, VERMELHO, 255, msg);
 
     // rodapé
@@ -1112,7 +1131,8 @@ static void desenhar(int sel, float cs[N], int ultimo, const char *msg, float fa
         x = dica(x, yr, BT_MENOS, u);
     }
 #endif
-    dica(x, yr, BT_MAIS, tr("launcher.menu.exit"));
+    x = dica(x, yr, BT_MAIS, tr("launcher.menu.exit"));
+    if (wn_md[0] || wn_md[1]) dica(x, yr, BT_ZL, tr("whatsnew.menu"));
     assinatura(yr);
 }
 
@@ -1428,6 +1448,340 @@ static void desenhar_atualizar(const UpdStatus *st) {
 }
 #endif
 
+// ---------------------------------------------------------------- texto em várias linhas
+// Quebra s em linhas de até maxw pixels (por palavras) e desenha a partir de y. Devolve quantas linhas usou.
+static int texto_quebra(int x, int y, int tam, u32 cor, int a, const char *s, int maxw, int altura, int max_linhas) {
+    char linha[512];
+    int n = 0;
+    while (*s && n < max_linhas) {
+        while (*s == ' ') s++;
+        size_t len = 0, corte = 0;
+        const char *p = s;
+        while (*p && *p != '\n') {
+            const char *fim = p;
+            while (*fim && *fim != ' ' && *fim != '\n') fim++;
+            size_t novo = (size_t)(fim - s);
+            if (novo >= sizeof linha) break;
+            memcpy(linha, s, novo);
+            linha[novo] = 0;
+            if (len && largura(tam, linha, 0) > maxw) break;
+            len = novo;
+            corte = (size_t)(fim - s);
+            p = fim;
+            while (*p == ' ') p++;
+        }
+        if (!len) {   // uma palavra só já passa da largura: corta com reticências
+            const char *fim = s;
+            while (*fim && *fim != ' ' && *fim != '\n') fim++;
+            corte = (size_t)(fim - s);
+            len = corte < sizeof linha - 1 ? corte : sizeof linha - 1;
+        }
+        memcpy(linha, s, len);
+        linha[len] = 0;
+        if (n == max_linhas - 1 && s[corte] && s[corte] != '\n') {   // última linha permitida: reticências se sobrar texto
+            char b[sizeof linha + 4];
+            snprintf(b, sizeof b, "%s …", linha);
+            texto_corte(x, y + n * altura, tam, cor, a, b, maxw);
+        } else {
+            texto_corte(x, y + n * altura, tam, cor, a, linha, maxw);
+        }
+        n++;
+        s += corte;
+        if (*s == '\n') s++;
+    }
+    return n;
+}
+
+static void tamanho_legivel(unsigned long long bytes, char *out, size_t cap) {
+    if (bytes >= (1ull << 30)) snprintf(out, cap, "%.1f GB", (double)bytes / (double)(1ull << 30));
+    else snprintf(out, cap, "%llu MB", bytes >> 20);
+}
+
+// ---------------------------------------------------------------- tela "Estado do jogo"
+// Mostra o que o launcher achou no SD para cada jogo: os arquivos obrigatórios, os extras opcionais (texturas HD,
+// vídeos HD, áudio do PS2) e o modo em que o hbmenu foi aberto, sempre dizendo o que fazer quando algo falta.
+enum { EST_OK, EST_AVISO, EST_ERRO, EST_NADA };   // EST_NADA: extra opcional que não está instalado
+typedef struct { int nivel; char rotulo[80]; char detalhe[240]; } EstLinha;
+#define EST_MAX 10
+typedef struct { EstLinha l[EST_MAX]; int n; } EstLista;
+static EstLista est_jogo[N], est_extras[N], est_sistema;
+static int est_bloqueia[N];        // o jogo não abre (erro em arquivo obrigatório ou no sistema)
+static int est_sistema_bloqueia;
+
+static EstLinha *est_add(EstLista *l, int nivel, const char *rotulo) {
+    if (l->n >= EST_MAX) return NULL;
+    EstLinha *e = &l->l[l->n++];
+    e->nivel = nivel;
+    snprintf(e->rotulo, sizeof e->rotulo, "%s", rotulo);
+    e->detalhe[0] = 0;
+    return e;
+}
+
+// Extra opcional descrito por um index.tsv (texturas ou vídeos). Mais de um problema vira linhas extras sem rótulo.
+static void est_extra_index(EstLista *l, const char *rotulo, const char *pasta_rel, const char *pasta, int texpack, int ligado) {
+    StIndex r;
+    st_index(pasta, texpack, &r);
+    EstLinha *e;
+    if (!r.folder) {
+        if ((e = est_add(l, EST_NADA, rotulo))) snprintf(e->detalhe, sizeof e->detalhe, "%s", tr("status.extra.none"));
+        return;
+    }
+    if (!r.index) {
+        if ((e = est_add(l, EST_AVISO, rotulo))) snprintf(e->detalhe, sizeof e->detalhe, tr("status.extra.no_index"), pasta_rel);
+        return;
+    }
+    int ok = r.listed - r.missing;
+    int nivel = r.missing || r.bad || r.bom || r.bad_key || !r.listed ? EST_AVISO : EST_OK;
+    if (!(e = est_add(l, nivel, rotulo))) return;
+    if (!r.listed) snprintf(e->detalhe, sizeof e->detalhe, "%s", tr("status.extra.empty"));
+    else if (r.missing) snprintf(e->detalhe, sizeof e->detalhe, tr("status.extra.missing"), r.missing, r.listed, r.first_missing);
+    else if (texpack && !ligado) snprintf(e->detalhe, sizeof e->detalhe, tr("status.extra.ok_off"), ok);
+    else snprintf(e->detalhe, sizeof e->detalhe, tr("status.extra.ok"), ok);
+    if (r.bom && (e = est_add(l, EST_AVISO, ""))) snprintf(e->detalhe, sizeof e->detalhe, "%s", tr("status.extra.bom"));
+    if (r.bad && (e = est_add(l, EST_AVISO, ""))) snprintf(e->detalhe, sizeof e->detalhe, tr("status.extra.bad"), r.bad);
+    if (r.bad_key && (e = est_add(l, EST_AVISO, ""))) snprintf(e->detalhe, sizeof e->detalhe, tr("status.extra.bad_key"), r.bad_key);
+}
+
+static void estado_ler(void) {
+    char p[FS_MAX_PATH], rel[160], rot[80];
+    // sistema: shaders, espaço e modo do hbmenu (valem para os dois jogos)
+    memset(&est_sistema, 0, sizeof est_sistema);
+    est_sistema_bloqueia = 0;
+    EstLinha *e;
+    snprintf(p, sizeof p, "%.700sshaders/shaders.pak", dir);
+    if (st_file_ok(p)) { if ((e = est_add(&est_sistema, EST_OK, tr("status.shaders.label")))) snprintf(e->detalhe, sizeof e->detalhe, "%s", tr("status.found")); }
+    else { est_sistema_bloqueia = 1; if ((e = est_add(&est_sistema, EST_ERRO, tr("status.shaders.label")))) snprintf(e->detalhe, sizeof e->detalhe, "%s", tr("status.shaders.missing")); }
+    snprintf(p, sizeof p, "%.700sshaders/shaders_dk.pak", dir);
+    const int quer_dk = !strcmp(opcoes[O_REND].val[opcoes[O_REND].atual], "deko3d");
+    if (st_file_ok(p)) { if ((e = est_add(&est_sistema, EST_OK, tr("status.shaders_dk.label")))) snprintf(e->detalhe, sizeof e->detalhe, "%s", tr("status.found")); }
+    else if ((e = est_add(&est_sistema, quer_dk ? EST_ERRO : EST_NADA, tr("status.shaders_dk.label")))) {
+        snprintf(e->detalhe, sizeof e->detalhe, "%s", tr(quer_dk ? "status.shaders_dk.missing_needed" : "status.shaders_dk.missing_optional"));
+        if (quer_dk) est_sistema_bloqueia = 1;
+    }
+    struct statvfs sv;
+    if (statvfs("sdmc:/", &sv) == 0) {
+        unsigned long long livre = (unsigned long long)sv.f_bavail * sv.f_frsize;
+        char t[32]; tamanho_legivel(livre, t, sizeof t);
+        const int pouco = livre < (500ull << 20);
+        if ((e = est_add(&est_sistema, pouco ? EST_AVISO : EST_OK, tr("status.space.label"))))
+            snprintf(e->detalhe, sizeof e->detalhe, tr(pouco ? "status.space.low" : "status.space.ok"), t);
+    }
+    const AppletType at = appletGetAppletType();
+    const int applet = at != AppletType_Application && at != AppletType_SystemApplication;
+    if ((e = est_add(&est_sistema, applet ? EST_ERRO : EST_OK, tr("status.mode.label"))))
+        snprintf(e->detalhe, sizeof e->detalhe, "%s", tr(applet ? "status.mode.applet" : "status.mode.ok"));
+    if (applet) est_sistema_bloqueia = 1;
+
+    for (int i = 0; i < N; i++) {
+        EstLista *g = &est_jogo[i], *x = &est_extras[i];
+        memset(g, 0, sizeof *g);
+        memset(x, 0, sizeof *x);
+        est_bloqueia[i] = 0;
+        // programa do jogo (gow1.nro / gow2.nro)
+        caminho(p, sizeof p, i);
+        snprintf(rot, sizeof rot, tr("status.nro.label"), jogos[i].arquivo);
+        if (existe(p)) { if ((e = est_add(g, EST_OK, rot))) snprintf(e->detalhe, sizeof e->detalhe, "%s", tr("status.found")); }
+        else { est_bloqueia[i] = 1; if ((e = est_add(g, EST_ERRO, rot))) snprintf(e->detalhe, sizeof e->detalhe, tr("status.nro.missing"), jogos[i].arquivo); }
+        // arquivos do PS Vita (o .psarc principal, já decifrado)
+        snprintf(rel, sizeof rel, "game/PCSA00126/exec/%s_psp2_SCEA.psarc", jogos[i].id);
+        snprintf(p, sizeof p, "%.700s%s", dir, rel);
+        StPsarc ps = st_psarc(p);
+        if ((e = est_add(g, ps == ST_PSARC_OK ? EST_OK : EST_ERRO, tr("status.psarc.label")))) {
+            if (ps == ST_PSARC_OK) snprintf(e->detalhe, sizeof e->detalhe, "%s", tr("status.psarc.ok"));
+            else if (ps == ST_PSARC_MISSING) snprintf(e->detalhe, sizeof e->detalhe, tr("status.psarc.missing"), rel);
+            else snprintf(e->detalhe, sizeof e->detalhe, tr("status.psarc.bad"), rel);
+        }
+        if (ps != ST_PSARC_OK) est_bloqueia[i] = 1;
+        // extras opcionais
+        snprintf(rel, sizeof rel, "data/texpack/%s/", jogos[i].id);
+        snprintf(p, sizeof p, "%.700sdata/texpack/%s", dir, jogos[i].id);
+        est_extra_index(x, tr("status.tex.label"), rel, p, 1, opcoes[O_TEX].atual);
+        snprintf(rel, sizeof rel, "data/videos/%s/", jogos[i].id);
+        snprintf(p, sizeof p, "%.700sdata/videos/%s", dir, jogos[i].id);
+        est_extra_index(x, tr("status.vid.label"), rel, p, 0, 1);
+        {
+            char a[FS_MAX_PATH], b[FS_MAX_PATH], na[48], nb[48];
+            snprintf(na, sizeof na, i ? "ps2audio_gow2.bin" : "ps2audio.bin");
+            snprintf(nb, sizeof nb, i ? "ps2audio_gow2_files.idx" : "ps2audio_files.idx");
+            snprintf(a, sizeof a, "%.700sdata/%s", dir, na);
+            snprintf(b, sizeof b, "%.700sdata/%s", dir, nb);
+            int par = st_pair(a, b);
+            if ((e = est_add(x, par == 1 ? EST_OK : par == 0 ? EST_NADA : EST_AVISO, tr("status.ps2.label")))) {
+                if (par == 1) snprintf(e->detalhe, sizeof e->detalhe, "%s", tr("status.found"));
+                else if (par == 0) snprintf(e->detalhe, sizeof e->detalhe, "%s", tr("status.extra.none"));
+                else snprintf(e->detalhe, sizeof e->detalhe, tr("status.ps2.partial"), na, nb);
+            }
+        }
+    }
+}
+
+// Pode jogar? (o mesmo critério do botão Jogar)
+static int estado_pode(int i) { return !est_bloqueia[i] && !est_sistema_bloqueia; }
+
+static int est_lista_desenhar(int x, int y, int w, const char *titulo, const EstLista *l) {
+    texto_e(x, y, 14, CINZA, 235, titulo, 3);
+    int wl = largura(14, titulo, 3);
+    linha_h(x + wl + 14, y - 5, w - wl - 14, OURO_ESC, 160);
+    y += 26;
+    for (int k = 0; k < l->n; k++) {
+        const EstLinha *e = &l->l[k];
+        static const char *const icone[] = { "✓", "!", "✗", "–" };
+        const u32 cor = e->nivel == EST_OK ? VERDE : e->nivel == EST_AVISO ? OURO : e->nivel == EST_ERRO ? VERMELHO : CINZA_ESC;
+        if (e->rotulo[0]) {
+            y += 8;
+            negrito(x + 4, y + 18, 20, cor, 255, icone[e->nivel], 0);
+            texto_corte(x + 34, y + 18, 19, BRANCO, 250, e->rotulo, w - 34);
+            y += 24;
+        }
+        y += 22 * texto_quebra(x + 34, y + 16, 16, e->nivel == EST_NADA ? CINZA_ESC : CINZA, 240, e->detalhe, w - 34, 22, 3);
+    }
+    return y;
+}
+
+static void desenhar_estado(int g) {
+    for (int y = 0; y < H; y++) memcpy(&px[y * pitch], &bg[y * W], W * 4);
+    retangulo(0, 80, W, 596, FUNDO, 170);
+    cabecalho();
+    // jogo (L/R), igual à tela de troféus
+    int x = 96 + 40;
+    texto(96, 140, 26, CINZA, 230, BT_L);
+    for (int i = 0; i < N; i++) {
+        int w = largura(21, jogos[i].titulo, 0);
+        if (i == g) {
+            rrect(x - 18, 108, w + 36, 44, 22, OURO, 40);
+            rborda(x - 18, 108, w + 36, 44, 22, 1, OURO_MED, 255);
+            negrito(x, 138, 21, OURO, 255, jogos[i].titulo, 0);
+        } else texto(x, 138, 21, CINZA, 220, jogos[i].titulo);
+        x += w + 60;
+    }
+    texto(x - 14, 140, 26, CINZA, 230, BT_R);
+    const char *res = estado_pode(g) ? tr("status.summary.ok") : tr("status.summary.blocked");
+    texto_dir(W - 96, 138, 18, estado_pode(g) ? VERDE : VERMELHO, 255, res);
+
+    const int col = (W - 96 * 2 - 48) / 2;
+    int yl = est_lista_desenhar(96, 196, col, tr("status.section.game"), &est_jogo[g]);
+    est_lista_desenhar(96, yl + 18, col, tr("status.section.system"), &est_sistema);
+    est_lista_desenhar(96 + col + 48, 196, col, tr("status.section.extras"), &est_extras[g]);
+
+    linha_h(48, 676, W - 96, OURO_ESC, 140);
+    int xr = 56, yr = 706;
+    xr = dica(xr, yr, BT_L BT_R, tr("launcher.menu.game"));
+    xr = dica(xr, yr, BT_Y, tr("status.btn.recheck"));
+    dica(xr, yr, BT_B, tr("common.back"));
+    assinatura(yr);
+}
+
+// ---------------------------------------------------------------- tela "Novidades"
+// Seção do CHANGELOG da versão instalada (embutido no romfs pelo build), lida para a RAM ao abrir: continua valendo
+// depois do romfsExit() do atualizador. Aparece a cada abertura até marcar "Não mostrar de novo".
+static size_t wn_md_len[2];
+static char wn_txt[16384];
+static int wn_marcado = 0;
+
+static char *ler_arquivo(const char *path, size_t max, size_t *len) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    char *b = malloc(max + 1);
+    size_t n = b ? fread(b, 1, max, f) : 0;
+    fclose(f);
+    if (!b) return NULL;
+    b[n] = 0;
+    *len = n;
+    return b;
+}
+
+static void novidades_carregar(void) {
+    if (!romfs_ativo) return;
+    wn_md[0] = ler_arquivo("romfs:/changelog/CHANGELOG.md", 256 * 1024, &wn_md_len[0]);
+    wn_md[1] = ler_arquivo("romfs:/changelog/CHANGELOG.en.md", 256 * 1024, &wn_md_len[1]);
+}
+
+// Prepara o texto no idioma atual. Devolve 1 se há notas para esta versão.
+static int novidades_preparar(void) {
+    int k = idioma == UI_PT ? 0 : 1;
+    if (!wn_md[k]) k = !k;
+    if (!wn_md[k]) return 0;
+    return wn_section(wn_md[k], wn_md_len[k], VERSAO, wn_txt, sizeof wn_txt) > 0;
+}
+
+// Divide wn_txt em linhas de tela (com quebra por largura) e devolve o total; desenha a partir da linha topo.
+static int novidades_desenhar_texto(int x, int y, int w, int topo, int max_linhas) {
+    int linha = 0;
+    const char *s = wn_txt;
+    while (*s) {
+        const char *fim = strchr(s, '\n');
+        size_t len = fim ? (size_t)(fim - s) : strlen(s);
+        char par[1024];
+        if (len >= sizeof par) len = sizeof par - 1;
+        memcpy(par, s, len);
+        par[len] = 0;
+        const int titulo = par[0] == '\x01';
+        const char *t = titulo ? par + 1 : par;
+        const int tam = titulo ? 21 : 17;
+        // conta as linhas deste parágrafo desenhando fora da tela quando ainda não chegou no topo
+        char resto[1024];
+        snprintf(resto, sizeof resto, "%s", t);
+        const char *q = resto;
+        while (*q) {
+            // uma linha de cada vez: quebra por largura
+            char l[512]; size_t n = 0, ult = 0;
+            const char *r = q;
+            while (*r) {
+                const char *e = r; while (*e && *e != ' ') e++;
+                size_t novo = (size_t)(e - q);
+                if (novo >= sizeof l) break;
+                memcpy(l, q, novo); l[novo] = 0;
+                if (n && largura(tam, l, 0) > w - (titulo ? 0 : 24)) break;
+                n = novo; ult = (size_t)(e - q);
+                r = e; while (*r == ' ') r++;
+            }
+            if (!n) { const char *e = q; while (*e && *e != ' ') e++; ult = (size_t)(e - q); n = ult < sizeof l ? ult : sizeof l - 1; }
+            memcpy(l, q, n); l[n] = 0;
+            if (linha >= topo && linha < topo + max_linhas) {
+                const int yy = y + (linha - topo) * 28 + (titulo ? 6 : 0);
+                const int indent = (!titulo && q != resto && !strncmp(resto, "\xE2\x80\xA2", 3)) ? 24 : 0;
+                if (titulo) negrito(x, yy, tam, OURO, 255, l, 0);
+                else texto_corte(x + indent, yy, tam, BRANCO, 240, l, w - indent);
+            }
+            linha++;
+            q += ult; while (*q == ' ') q++;
+        }
+        if (titulo) linha++;   // respiro depois do subtítulo
+        s += len;
+        if (*s == '\n') s++;
+    }
+    return linha;
+}
+
+static int desenhar_novidades(int topo) {
+    for (int y = 0; y < H; y++) memcpy(&px[y * pitch], &bg[y * W], W * 4);
+    retangulo(0, 80, W, 596, FUNDO, 190);
+    cabecalho();
+    char t[96]; snprintf(t, sizeof t, tr("whatsnew.title"), VERSAO);
+    negrito(96, 140, 26, OURO, 255, t, 1);
+    const int X = 96, Y = 186, LW = W - 96 * 2, LINHAS = 15;
+    rrect(X - 20, Y - 20, LW + 40, LINHAS * 28 + 24, 16, PAINEL, 200);
+    int total = novidades_desenhar_texto(X, Y + 8, LW, topo, LINHAS);
+    if (total > LINHAS) {   // barra de rolagem
+        const int bh = LINHAS * 28, th = bh * LINHAS / total, ty = Y - 8 + (bh - th) * topo / (total - LINHAS);
+        retangulo(X + LW + 8, Y - 8, 4, bh, CINZA_ESC, 120);
+        retangulo(X + LW + 8, ty, 4, th, OURO, 220);
+    }
+    // caixa "Não mostrar de novo"
+    const int cy = Y + LINHAS * 28 + 22;
+    rborda(X, cy, 26, 26, 6, 2, wn_marcado ? OURO : CINZA, 255);
+    if (wn_marcado) negrito(X + 5, cy + 21, 20, OURO, 255, "✓", 0);
+    texto(X + 40, cy + 20, 19, wn_marcado ? OURO : BRANCO, 255, tr("whatsnew.dont_show"));
+
+    linha_h(48, 676, W - 96, OURO_ESC, 140);
+    int xr = 56, yr = 706;
+    if (total > LINHAS) xr = dica(xr, yr, "↑↓", tr("whatsnew.btn.scroll"));
+    xr = dica(xr, yr, BT_Y, tr("whatsnew.dont_show"));
+    dica(xr, yr, BT_B, tr("whatsnew.btn.close"));
+    assinatura(yr);
+    return total;
+}
+
 static void carregar_fundo(void) {
     bg = malloc(W * H * 4);
     if (!bg) return;
@@ -1497,6 +1851,8 @@ int main(int argc, char **argv) {
     sincronizar_idioma_auto();
     musica_iniciar();
     info_ler();
+    estado_ler();
+    novidades_carregar();
     capas_carregar();
 
     const int ultimo = ler_ultimo();
@@ -1508,6 +1864,18 @@ int main(int argc, char **argv) {
     const char *msg = msg_hb;
     u64 tick = 0;
     int tela_trof = 0, t_jogo = 0, t_sel = 0, t_topo = 0, t_filtro = 0, t_spoiler = 0;
+    // Tela de estado: abre sozinha quando nenhum jogo pode abrir (falta algo obrigatório ou o hbmenu está em modo
+    // applet). Senão, as Novidades aparecem se a versão mudou e o jogador ainda não marcou "Não mostrar de novo".
+    int tela_est = 0, e_jogo = sel, tela_nov = 0, n_topo = 0, n_total = 0;
+    {
+        int algum = 0;
+        for (int i = 0; i < N; i++) algum |= estado_pode(i);
+        char visto[64], vf[FS_MAX_PATH];
+        snprintf(vf, sizeof vf, "%.700sdata/whatsnew_seen.txt", dir);
+        wn_seen_read(vf, visto, sizeof visto);
+        if (!algum) tela_est = 1;
+        else if (wn_should_show(visto, VERSAO) && novidades_preparar()) tela_nov = 1;
+    }
 #ifdef ENABLE_UPDATER
     int tela_upd = 0, upd_auto = 1, upd_ultimo = -1;
     upd_start_check(VERSAO);          // checagem silenciosa ao abrir; o aviso aparece no rodapé
@@ -1563,6 +1931,38 @@ int main(int argc, char **argv) {
             continue;
         }
 #endif
+        if (tela_est) {
+            if (k & (HidNpadButton_R | HidNpadButton_ZR)) e_jogo = (e_jogo + 1) % N;
+            if (k & (HidNpadButton_L | HidNpadButton_ZL)) e_jogo = (e_jogo + N - 1) % N;
+            if (k & HidNpadButton_Y) { estado_ler(); info_ler(); }
+            if (k & (HidNpadButton_B | HidNpadButton_Plus)) tela_est = 0;
+            if (k || tick % 60 == 0) sujo = 1;
+            if (sujo && tela_est) { px = quadro, pitch = W; desenhar_estado(e_jogo); sujo = 0; }
+            tick++;
+            apresentar(&fb, NULL);
+            if (!tela_est) sujo = 1;
+            continue;
+        }
+        if (tela_nov) {
+            const int linhas = 15;
+            if ((k & HidNpadButton_AnyDown) && n_topo + linhas < n_total) n_topo++;
+            if ((k & HidNpadButton_AnyUp) && n_topo > 0) n_topo--;
+            if (k & HidNpadButton_Y) wn_marcado ^= 1;
+            if (k & (HidNpadButton_B | HidNpadButton_A | HidNpadButton_Plus)) {
+                if (wn_marcado) {
+                    char vf[FS_MAX_PATH];
+                    snprintf(vf, sizeof vf, "%.700sdata/whatsnew_seen.txt", dir);
+                    wn_seen_write(vf, VERSAO);
+                }
+                tela_nov = 0;
+            }
+            if (k || tick % 60 == 0) sujo = 1;
+            if (sujo && tela_nov) { px = quadro, pitch = W; n_total = desenhar_novidades(n_topo); sujo = 0; }
+            tick++;
+            apresentar(&fb, NULL);
+            if (!tela_nov) sujo = 1;
+            continue;
+        }
         if (tela_trof) {
             const TrophySet *ts = trof_do(t_jogo);
             int lista[TRP_MAX_TROPHIES], n = ts->loaded ? trof_lista(ts, t_filtro, lista) : 0;
@@ -1632,6 +2032,8 @@ int main(int argc, char **argv) {
         }
         if (k & HidNpadButton_Y) { tela_op = 1; sel_op = 0; msg = msg_hb; sujo = 1; continue; }
         if (k & HidNpadButton_X) { tela_trof = 1; t_jogo = sel; t_sel = t_topo = 0; sujo = 1; continue; }
+        if (k & HidNpadButton_ZR) { estado_ler(); tela_est = 1; e_jogo = sel; sujo = 1; continue; }
+        if ((k & HidNpadButton_ZL) && novidades_preparar()) { tela_nov = 1; n_topo = 0; sujo = 1; continue; }
 #ifdef ENABLE_UPDATER
         if (k & HidNpadButton_Minus) {
             if (st.state != UPD_AVAILABLE && st.state != UPD_CHECKING) upd_start_check(VERSAO);
@@ -1642,8 +2044,8 @@ int main(int argc, char **argv) {
             char p[FS_MAX_PATH]; caminho(p, sizeof p, sel);
             info[sel].nro = existe(p);
             info[sel].dump = ga_game_dump_ok(dir, sel);
-            if (!info[sel].nro) msg = tr("launcher.msg.game_file_missing");
-            else if (!info[sel].dump) msg = tr("launcher.msg.vita_files_missing");
+            estado_ler();
+            if (!estado_pode(sel)) { tela_est = 1; e_jogo = sel; sujo = 1; continue; }
             else if (envHasNextLoad()) {
                 if ((mudou || opcoes[O_LANG].atual == 0) && !opcoes_gravar())
                     msg = tr("launcher.msg.ini_write_failed");

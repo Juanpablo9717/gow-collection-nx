@@ -16,7 +16,7 @@ mkdir -p "$O" "$ROOT/launcher/romfs"
 ARCH=(-march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE)
 CFLAGS=("${ARCH[@]}" -O2 -Wall -Wno-format-truncation -D__SWITCH__ "-DVERSAO=\"$VERSION\"" "-DUPDATE_REPO=\"$UPDATE_REPO\"" "-I$DKP/libnx/include" "-I$PL/include" "-I$PL/include/freetype2" "-I$ROOT/launcher" "-I$ROOT/platform/nx")
 
-OBJS=("$O/main.o" "$O/game_assets.o" "$O/trophies.o" "$O/i18n.o" "$O/i18n_data.o")
+OBJS=("$O/main.o" "$O/game_assets.o" "$O/trophies.o" "$O/i18n.o" "$O/i18n_data.o" "$O/status.o" "$O/whatsnew.o")
 
 # LibAtrac9 opcional (MIT): decodifica tit1e1_2.at9 direto de game/PCSA00126/exec/gow1_psp2_SCEA.psarc
 AT9_SRC=""
@@ -61,6 +61,8 @@ fi
 
 "$B/aarch64-none-elf-gcc" "${CFLAGS[@]}" -c "$ROOT/launcher/game_assets.c" -o "$O/game_assets.o"
 "$B/aarch64-none-elf-gcc" "${CFLAGS[@]}" -c "$ROOT/launcher/trophies.c" -o "$O/trophies.o"
+"$B/aarch64-none-elf-gcc" "${CFLAGS[@]}" -c "$ROOT/launcher/status.c" -o "$O/status.o"
+"$B/aarch64-none-elf-gcc" "${CFLAGS[@]}" -c "$ROOT/launcher/whatsnew.c" -o "$O/whatsnew.o"
 "$B/aarch64-none-elf-gcc" "${CFLAGS[@]}" -c "$ROOT/platform/nx/i18n.c" -o "$O/i18n.o"
 "$B/aarch64-none-elf-gcc" "${CFLAGS[@]}" -c "$ROOT/platform/nx/i18n_data.c" -o "$O/i18n_data.o"
 "$B/aarch64-none-elf-gcc" "${CFLAGS[@]}" -c "$ROOT/launcher/main.c" -o "$O/main.o"
@@ -68,5 +70,8 @@ fi
     "${CURL_LIBS[@]}" -lwebp -lfreetype -lharfbuzz -lfreetype -lbz2 -lpng16 -lz -lmpg123 -lnx -lm
 "$DKP/tools/bin/nacptool" --create "God of War Collection" "Guto Recomp" "$VERSION" "$O/gow-nx.nacp"
 ICON=""; [ -f "$ROOT/res/icon_launcher.jpg" ] && ICON="--icon=$ROOT/res/icon_launcher.jpg"
+# changelog da versão para a tela "Novidades" (copiado a cada build; não fica no git)
+mkdir -p "$ROOT/launcher/romfs/changelog"
+cp "$ROOT/CHANGELOG.md" "$ROOT/CHANGELOG.en.md" "$ROOT/launcher/romfs/changelog/"
 "$DKP/tools/bin/elf2nro" "$O/gow-nx.elf" "$ROOT/build/gow-nx.nro" --nacp="$O/gow-nx.nacp" $ICON --romfsdir="$ROOT/launcher/romfs"
 ls -la "$ROOT/build/gow-nx.nro"

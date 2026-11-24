@@ -34,3 +34,4 @@ tools/lsfg_prep/*.exe
 /lsfg/
 *.dll
 !tools/lsfg_prep/gen/
+launcher/romfs/changelog/
