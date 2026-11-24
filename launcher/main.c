@@ -1018,6 +1018,7 @@ static void linha_perfil(int x, int y, int w, const char *rotulo, const char *va
 static int estado_pode(int i);
 static void texto_corte(int x, int y, int tam, u32 cor, int a, const char *s, int maxw);
 static char *wn_md[2];   // 0 = inglês (CHANGELOG.en.md), 1 = português (CHANGELOG.md)
+static int wn_disponivel;   // há notas da versão instalada no idioma atual (ou em inglês)
 
 static void desenhar(int sel, float cs[N], int ultimo, const char *msg, float fade) {
     for (int y = 0; y < H; y++) memcpy(&px[y * pitch], &bg[y * W], W * 4);
@@ -1137,7 +1138,11 @@ static void desenhar(int sel, float cs[N], int ultimo, const char *msg, float fa
     }
 #endif
     x = dica(x, yr, BT_MAIS, tr("launcher.menu.exit"));
-    if (wn_md[0] || wn_md[1]) dica(x, yr, BT_ZL, tr("whatsnew.menu"));
+    {   // "Novidades" só quando há notas para esta versão e cabe antes da assinatura
+        const char *nv = tr("whatsnew.menu");
+        const int w = largura(26, BT_ZL, 0) + 12 + largura(19, nv, 0);
+        if (wn_disponivel && x + w <= W - 56 - largura(19, "Guto Recomp", 0) - 24) dica(x, yr, BT_ZL, nv);
+    }
     assinatura(yr);
 }
 
@@ -1483,7 +1488,9 @@ static int texto_quebra(int x, int y, int tam, u32 cor, int a, const char *s, in
         }
         memcpy(linha, s, len);
         linha[len] = 0;
-        if (n == max_linhas - 1 && s[corte] && s[corte] != '\n') {   // última linha permitida: reticências se sobrar texto
+        const char *resto = s + corte;
+        while (*resto == ' ') resto++;
+        if (n == max_linhas - 1 && *resto && *resto != '\n') {   // última linha permitida: reticências se sobrar texto
             char b[sizeof linha + 4];
             snprintf(b, sizeof b, "%s …", linha);
             texto_corte(x, y + n * altura, tam, cor, a, b, maxw);
@@ -1547,7 +1554,9 @@ static void est_extra_index(EstLista *l, const char *rotulo, const char *pasta_r
     if (r.bad_key && (e = est_add(l, EST_AVISO, ""))) snprintf(e->detalhe, sizeof e->detalhe, tr("status.extra.bad_key"), r.bad_key);
 }
 
-static void estado_ler(void) {
+// extras = 0 refaz só o obrigatório (rápido, usado ao apertar Jogar); 1 também lê os index.tsv dos extras, que
+// conferem cada arquivo listado e podem demorar com um pacote grande de texturas.
+static void estado_ler(int extras) {
     char p[FS_MAX_PATH], rel[160], rot[80];
     // sistema: shaders, espaço e modo do hbmenu (valem para os dois jogos)
     memset(&est_sistema, 0, sizeof est_sistema);
@@ -1573,14 +1582,14 @@ static void estado_ler(void) {
     }
     const AppletType at = appletGetAppletType();
     const int applet = at != AppletType_Application && at != AppletType_SystemApplication;
-    if ((e = est_add(&est_sistema, applet ? EST_ERRO : EST_OK, tr("status.mode.label"))))
+    // modo applet é aviso, não bloqueio: a detecção pode variar e o jogador ainda pode tentar
+    if ((e = est_add(&est_sistema, applet ? EST_AVISO : EST_OK, tr("status.mode.label"))))
         snprintf(e->detalhe, sizeof e->detalhe, "%s", tr(applet ? "status.mode.applet" : "status.mode.ok"));
-    if (applet) est_sistema_bloqueia = 1;
 
     for (int i = 0; i < N; i++) {
         EstLista *g = &est_jogo[i], *x = &est_extras[i];
         memset(g, 0, sizeof *g);
-        memset(x, 0, sizeof *x);
+        if (extras) memset(x, 0, sizeof *x);
         est_bloqueia[i] = 0;
         // programa do jogo (gow1.nro / gow2.nro)
         caminho(p, sizeof p, i);
@@ -1597,6 +1606,7 @@ static void estado_ler(void) {
             else snprintf(e->detalhe, sizeof e->detalhe, tr("status.psarc.bad"), rel);
         }
         if (ps != ST_PSARC_OK) est_bloqueia[i] = 1;
+        if (!extras) continue;
         // extras opcionais
         snprintf(rel, sizeof rel, "data/texpack/%s/", jogos[i].id);
         snprintf(p, sizeof p, "%.700sdata/texpack/%s", dir, jogos[i].id);
@@ -1623,13 +1633,18 @@ static void estado_ler(void) {
 // Pode jogar? (o mesmo critério do botão Jogar)
 static int estado_pode(int i) { return !est_bloqueia[i] && !est_sistema_bloqueia; }
 
-static int est_lista_desenhar(int x, int y, int w, const char *titulo, const EstLista *l) {
+// Desenha uma seção até y_max; o que não couber vira "…" no fim (nunca invade o rodapé).
+static int est_lista_desenhar(int x, int y, int w, const char *titulo, const EstLista *l, int y_max) {
     texto_e(x, y, 14, CINZA, 235, titulo, 3);
     int wl = largura(14, titulo, 3);
     linha_h(x + wl + 14, y - 5, w - wl - 14, OURO_ESC, 160);
     y += 26;
     for (int k = 0; k < l->n; k++) {
         const EstLinha *e = &l->l[k];
+        if (y + (e->rotulo[0] ? 32 : 0) + 44 > y_max) {   // rótulo + até 2 linhas de detalhe não cabem
+            texto(x + 34, y + 16, 16, CINZA, 240, "…");
+            return y + 22;
+        }
         static const char *const icone[] = { "✓", "!", "✗", "–" };
         const u32 cor = e->nivel == EST_OK ? VERDE : e->nivel == EST_AVISO ? OURO : e->nivel == EST_ERRO ? VERMELHO : CINZA_ESC;
         if (e->rotulo[0]) {
@@ -1638,7 +1653,7 @@ static int est_lista_desenhar(int x, int y, int w, const char *titulo, const Est
             texto_corte(x + 34, y + 18, 19, BRANCO, 250, e->rotulo, w - 34);
             y += 24;
         }
-        y += 22 * texto_quebra(x + 34, y + 16, 16, e->nivel == EST_NADA ? CINZA_ESC : CINZA, 240, e->detalhe, w - 34, 22, 3);
+        y += 22 * texto_quebra(x + 34, y + 16, 16, e->nivel == EST_NADA ? CINZA_ESC : CINZA, 240, e->detalhe, w - 34, 22, 2);
     }
     return y;
 }
@@ -1664,14 +1679,17 @@ static void desenhar_estado(int g) {
     texto_dir(W - 96, 138, 18, estado_pode(g) ? VERDE : VERMELHO, 255, res);
 
     const int col = (W - 96 * 2 - 48) / 2;
-    int yl = est_lista_desenhar(96, 196, col, tr("status.section.game"), &est_jogo[g]);
-    est_lista_desenhar(96, yl + 18, col, tr("status.section.system"), &est_sistema);
-    est_lista_desenhar(96 + col + 48, 196, col, tr("status.section.extras"), &est_extras[g]);
+    // esquerda: o que é do jogo (obrigatório e extras); direita: console e shaders, que valem para os dois
+    const int y_max = 664;
+    int yl = est_lista_desenhar(96, 196, col, tr("status.section.game"), &est_jogo[g], y_max);
+    est_lista_desenhar(96, yl + 18, col, tr("status.section.extras"), &est_extras[g], y_max);
+    est_lista_desenhar(96 + col + 48, 196, col, tr("status.section.system"), &est_sistema, y_max);
 
     linha_h(48, 676, W - 96, OURO_ESC, 140);
     int xr = 56, yr = 706;
     xr = dica(xr, yr, BT_L BT_R, tr("launcher.menu.game"));
     xr = dica(xr, yr, BT_Y, tr("status.btn.recheck"));
+    if (wn_disponivel) xr = dica(xr, yr, BT_ZL, tr("whatsnew.menu"));
     dica(xr, yr, BT_B, tr("common.back"));
     assinatura(yr);
 }
@@ -1688,8 +1706,10 @@ static int wn_marcado = 0;
 static char *ler_arquivo(const char *path, size_t max, size_t *len) {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
-    char *b = malloc(max + 1);
-    size_t n = b ? fread(b, 1, max, f) : 0;
+    long tam = fseek(f, 0, SEEK_END) == 0 ? ftell(f) : -1;
+    rewind(f);
+    char *b = tam >= 0 && (size_t)tam <= max ? malloc((size_t)tam + 1) : NULL;
+    size_t n = b ? fread(b, 1, (size_t)tam, f) : 0;
     fclose(f);
     if (!b) return NULL;
     b[n] = 0;
@@ -1866,8 +1886,9 @@ int main(int argc, char **argv) {
     sincronizar_idioma_auto();
     musica_iniciar();
     info_ler();
-    estado_ler();
+    estado_ler(0);
     novidades_carregar();
+    wn_disponivel = novidades_preparar();
     capas_carregar();
 
     const int ultimo = ler_ultimo();
@@ -1888,8 +1909,8 @@ int main(int argc, char **argv) {
         char visto[64], vf[FS_MAX_PATH];
         snprintf(vf, sizeof vf, "%.700sdata/whatsnew_seen.txt", dir);
         wn_seen_read(vf, visto, sizeof visto);
-        if (!algum) tela_est = 1;
-        else if (wn_should_show(visto, VERSAO) && novidades_preparar()) tela_nov = 1;
+        if (!algum) { estado_ler(1); tela_est = 1; }
+        else if (wn_should_show(visto, VERSAO) && wn_disponivel) tela_nov = 1;
     }
 #ifdef ENABLE_UPDATER
     int tela_upd = 0, upd_auto = 1, upd_ultimo = -1;
@@ -1949,7 +1970,8 @@ int main(int argc, char **argv) {
         if (tela_est) {
             if (k & (HidNpadButton_R | HidNpadButton_ZR)) e_jogo = (e_jogo + 1) % N;
             if (k & (HidNpadButton_L | HidNpadButton_ZL)) e_jogo = (e_jogo + N - 1) % N;
-            if (k & HidNpadButton_Y) { estado_ler(); info_ler(); }
+            if (k & HidNpadButton_Y) { estado_ler(1); info_ler(); }
+            if ((k & HidNpadButton_ZL) && wn_disponivel && novidades_preparar()) { tela_est = 0; tela_nov = 1; n_topo = 0; }
             if (k & (HidNpadButton_B | HidNpadButton_Plus)) tela_est = 0;
             if (k || tick % 60 == 0) sujo = 1;
             if (sujo && tela_est) { px = quadro, pitch = W; desenhar_estado(e_jogo); sujo = 0; }
@@ -2026,6 +2048,9 @@ int main(int argc, char **argv) {
                 if (mudou && !opcoes_gravar()) msg = tr("launcher.msg.ini_write_failed");
                 else msg = msg_hb, mudou = 0;
                 tela_op = 0;
+                // o renderizador, as texturas HD e o idioma mudam o estado e os textos: refaz o que é rápido
+                estado_ler(0);
+                wn_disponivel = novidades_preparar();
             }
             if (k || tick % 60 == 0) sujo = 1;
             if (sujo) { px = quadro, pitch = W; desenhar_opcoes(aba, sel_op, msg == msg_hb ? NULL : msg); sujo = 0; }
@@ -2047,8 +2072,8 @@ int main(int argc, char **argv) {
         }
         if (k & HidNpadButton_Y) { tela_op = 1; sel_op = 0; msg = msg_hb; sujo = 1; continue; }
         if (k & HidNpadButton_X) { tela_trof = 1; t_jogo = sel; t_sel = t_topo = 0; sujo = 1; continue; }
-        if (k & HidNpadButton_ZR) { estado_ler(); tela_est = 1; e_jogo = sel; sujo = 1; continue; }
-        if ((k & HidNpadButton_ZL) && novidades_preparar()) { tela_nov = 1; n_topo = 0; sujo = 1; continue; }
+        if (k & HidNpadButton_ZR) { estado_ler(1); tela_est = 1; e_jogo = sel; sujo = 1; continue; }
+        if ((k & HidNpadButton_ZL) && wn_disponivel && novidades_preparar()) { tela_nov = 1; n_topo = 0; sujo = 1; continue; }
 #ifdef ENABLE_UPDATER
         if (k & HidNpadButton_Minus) {
             if (st.state != UPD_AVAILABLE && st.state != UPD_CHECKING) upd_start_check(VERSAO);
@@ -2059,8 +2084,8 @@ int main(int argc, char **argv) {
             char p[FS_MAX_PATH]; caminho(p, sizeof p, sel);
             info[sel].nro = existe(p);
             info[sel].dump = ga_game_dump_ok(dir, sel);
-            estado_ler();
-            if (!estado_pode(sel)) { tela_est = 1; e_jogo = sel; sujo = 1; continue; }
+            estado_ler(0);   // só o obrigatório: com um pacote grande de texturas, ler os extras atrasaria o Jogar
+            if (!estado_pode(sel)) { estado_ler(1); tela_est = 1; e_jogo = sel; sujo = 1; continue; }
             else if (envHasNextLoad()) {
                 if ((mudou || opcoes[O_LANG].atual == 0) && !opcoes_gravar())
                     msg = tr("launcher.msg.ini_write_failed");
