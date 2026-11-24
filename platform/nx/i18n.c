@@ -96,11 +96,12 @@ static void unescape(char *s) {
     *w = 0;
 }
 
-// {A}, {B}, {X}, {Y}, {L}, {R} e {PLUS} viram os glifos de botão da fonte do sistema (NintendoExt).
+// {A}, {B}, {X}, {Y}, {L}, {R}, {ZL}, {ZR}, {PLUS} e {MINUS} viram os glifos de botão da fonte do sistema (NintendoExt).
 // Cada glifo ocupa no máximo o tamanho do token, então a troca é feita no próprio buffer.
 static const struct { const char *token, *glyph; } kGlyphs[] = {
     { "{A}", "\xEE\x83\xA0" }, { "{B}", "\xEE\x83\xA1" }, { "{X}", "\xEE\x83\xA2" }, { "{Y}", "\xEE\x83\xA3" },
-    { "{L}", "\xEE\x83\xA4" }, { "{R}", "\xEE\x83\xA5" }, { "{PLUS}", "\xEE\x83\xAF" },
+    { "{L}", "\xEE\x83\xA4" }, { "{R}", "\xEE\x83\xA5" }, { "{ZL}", "\xEE\x83\xA6" }, { "{ZR}", "\xEE\x83\xA7" },
+    { "{PLUS}", "\xEE\x83\xAF" }, { "{MINUS}", "\xEE\x83\xB0" },
 };
 
 static void expand_glyphs(char *s) {

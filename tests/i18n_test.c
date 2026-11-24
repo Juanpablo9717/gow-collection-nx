@@ -57,6 +57,7 @@ static void test_parsing(void) {
         "dup = first\n"
         "dup = second\n"
         "glyphs = Press {A} or {PLUS}, {Z} stays\n"
+        "glyphs2 = {MINUS}{ZL}{ZR}{MINUS\n"
         "last = no newline at end");
     i18n_set("en");
     CHECK_STR(tr("spaced"), "value with spaces");
@@ -67,6 +68,7 @@ static void test_parsing(void) {
     CHECK_STR(tr("utf8"), "ação Ñandú 日本");
     CHECK_STR(tr("dup"), "second");
     CHECK_STR(tr("glyphs"), "Press \xEE\x83\xA0 or \xEE\x83\xAF, {Z} stays");
+    CHECK_STR(tr("glyphs2"), "\xEE\x83\xB0\xEE\x83\xA6\xEE\x83\xA7{MINUS");   // token sem "}" fica como está
     CHECK_STR(tr("last"), "no newline at end");
     CHECK_STR(tr("no equals sign here"), "no equals sign here");  // ignorada: volta a chave
     CHECK_STR(tr(""), "");

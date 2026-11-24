@@ -646,11 +646,15 @@ static u32 mix(u32 a, u32 b, float t) {          // a -> b
     return RGB(r, g, bl);
 }
 
+// Decodifica um caractere UTF-8. Uma sequência cortada (texto truncado) vira U+FFFD sem passar do '\0'.
 static u32 utf8(const char **s) {
     const unsigned char *p = (const unsigned char *)*s; u32 c = *p++;
-    if (c >= 0xf0) { c = (c & 7) << 18 | (p[0] & 63) << 12 | (p[1] & 63) << 6 | (p[2] & 63); p += 3; }
-    else if (c >= 0xe0) { c = (c & 15) << 12 | (p[0] & 63) << 6 | (p[1] & 63); p += 2; }
-    else if (c >= 0xc0) { c = (c & 31) << 6 | (p[0] & 63); p += 1; }
+    int extra = c >= 0xf0 ? 3 : c >= 0xe0 ? 2 : c >= 0xc0 ? 1 : 0;
+    c &= extra == 3 ? 7 : extra == 2 ? 15 : extra == 1 ? 31 : 0xff;
+    for (int i = 0; i < extra; i++, p++) {
+        if ((*p & 0xc0) != 0x80) { *s = (const char *)p; return 0xfffd; }   // inclui o '\0'
+        c = c << 6 | (*p & 63);
+    }
     *s = (const char *)p; return c;
 }
 
@@ -1012,7 +1016,8 @@ static void linha_perfil(int x, int y, int w, const char *rotulo, const char *va
 #define BT_ZL "\xEE\x83\xA6"
 #define BT_ZR "\xEE\x83\xA7"
 static int estado_pode(int i);
-static char *wn_md[2];   // 0 = CHANGELOG.md (pt), 1 = CHANGELOG.en.md (en, também para os demais idiomas)
+static void texto_corte(int x, int y, int tam, u32 cor, int a, const char *s, int maxw);
+static char *wn_md[2];   // 0 = inglês (CHANGELOG.en.md), 1 = português (CHANGELOG.md)
 
 static void desenhar(int sel, float cs[N], int ultimo, const char *msg, float fade) {
     for (int y = 0; y < H; y++) memcpy(&px[y * pitch], &bg[y * W], W * 4);
@@ -1675,6 +1680,8 @@ static void desenhar_estado(int g) {
 // Seção do CHANGELOG da versão instalada (embutido no romfs pelo build), lida para a RAM ao abrir: continua valendo
 // depois do romfsExit() do atualizador. Aparece a cada abertura até marcar "Não mostrar de novo".
 static size_t wn_md_len[2];
+static char *wn_lang[NUI_LANG];   // changelog de cada idioma da interface, quando o build traz
+static size_t wn_lang_len[NUI_LANG];
 static char wn_txt[16384];
 static int wn_marcado = 0;
 
@@ -1692,16 +1699,24 @@ static char *ler_arquivo(const char *path, size_t max, size_t *len) {
 
 static void novidades_carregar(void) {
     if (!romfs_ativo) return;
-    wn_md[0] = ler_arquivo("romfs:/changelog/CHANGELOG.md", 256 * 1024, &wn_md_len[0]);
-    wn_md[1] = ler_arquivo("romfs:/changelog/CHANGELOG.en.md", 256 * 1024, &wn_md_len[1]);
+    // CHANGELOG.md é o português do projeto; os outros idiomas são CHANGELOG.<código>.md, com o inglês de recuo.
+    wn_md[0] = ler_arquivo("romfs:/changelog/CHANGELOG.en.md", 256 * 1024, &wn_md_len[0]);
+    for (int u = 0; u < NUI_LANG; u++) {
+        if (u == UI_EN) continue;
+        char p[64];
+        if (u == UI_PT) snprintf(p, sizeof p, "romfs:/changelog/CHANGELOG.md");
+        else snprintf(p, sizeof p, "romfs:/changelog/CHANGELOG.%s.md", ui_codigo[u]);
+        wn_lang[u] = ler_arquivo(p, 256 * 1024, &wn_lang_len[u]);
+    }
+    wn_md[1] = wn_lang[UI_PT];
 }
 
-// Prepara o texto no idioma atual. Devolve 1 se há notas para esta versão.
+// Prepara o texto no idioma atual (com recuo para o inglês). Devolve 1 se há notas para esta versão.
 static int novidades_preparar(void) {
-    int k = idioma == UI_PT ? 0 : 1;
-    if (!wn_md[k]) k = !k;
-    if (!wn_md[k]) return 0;
-    return wn_section(wn_md[k], wn_md_len[k], VERSAO, wn_txt, sizeof wn_txt) > 0;
+    if (idioma != UI_EN && wn_lang[idioma] &&
+        wn_section(wn_lang[idioma], wn_lang_len[idioma], VERSAO, wn_txt, sizeof wn_txt) > 0)
+        return 1;
+    return wn_md[0] && wn_section(wn_md[0], wn_md_len[0], VERSAO, wn_txt, sizeof wn_txt) > 0;
 }
 
 // Divide wn_txt em linhas de tela (com quebra por largura) e devolve o total; desenha a partir da linha topo.

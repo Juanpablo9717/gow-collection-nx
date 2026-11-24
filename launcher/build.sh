@@ -72,6 +72,6 @@ fi
 ICON=""; [ -f "$ROOT/res/icon_launcher.jpg" ] && ICON="--icon=$ROOT/res/icon_launcher.jpg"
 # changelog da versão para a tela "Novidades" (copiado a cada build; não fica no git)
 mkdir -p "$ROOT/launcher/romfs/changelog"
-cp "$ROOT/CHANGELOG.md" "$ROOT/CHANGELOG.en.md" "$ROOT/launcher/romfs/changelog/"
+cp "$ROOT"/CHANGELOG*.md "$ROOT/launcher/romfs/changelog/"
 "$DKP/tools/bin/elf2nro" "$O/gow-nx.elf" "$ROOT/build/gow-nx.nro" --nacp="$O/gow-nx.nacp" $ICON --romfsdir="$ROOT/launcher/romfs"
 ls -la "$ROOT/build/gow-nx.nro"

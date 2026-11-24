@@ -251,6 +251,97 @@ static void test_whatsnew(void) {
     CHECK(!wn_seen_write("pasta_inexistente/x/y.txt", "1.5"));
 }
 
+// ------------------------------------------------------------------ regressões achadas pelo teste adversarial
+static int utf8_complete(const char *s) {   // 1 se não termina no meio de um caractere
+    size_t n = strlen(s), i = n;
+    while (i > 0 && ((unsigned char)s[i - 1] & 0xC0) == 0x80) i--;
+    if (i == 0) return n == 0;
+    unsigned char lead = (unsigned char)s[i - 1];
+    size_t need = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1;
+    return n - (i - 1) >= need;
+}
+
+static void test_regressions(void) {
+    char out[64];
+    StIndex r;
+    // 1. corte no meio de um caractere UTF-8: nem a seção nem first_missing terminam pela metade
+    const char *md = "## 1.4\n- \xC3\xA3\xC3\xA3\xC3\xA3\xC3\xA3\n";
+    for (size_t cap = 1; cap < 16; cap++) {
+        char o[16];
+        wn_section(md, strlen(md), "1.4", o, cap);
+        CHECK(utf8_complete(o));
+    }
+    mkpack("r_utf8");
+    {
+        char line[200] = "k\t";
+        size_t n = 2;
+        while (n < 190) { line[n++] = (char)0xC3; line[n++] = (char)0xA3; }   // "ããã..." maior que first_missing
+        line[n++] = '\n';
+        write_bytes("r_utf8/index.tsv", line, n);
+        st_index("r_utf8", 0, &r);
+        CHECK(r.missing == 1 && utf8_complete(r.first_missing));
+    }
+    // 2. ao encher, não emenda pedaço de outra linha
+    const char *splice = "## 1.4\nabc  \nzz\n\n- x\n";
+    wn_section(splice, strlen(splice), "1.4", out, 6);
+    CHECK_STR(out, "abc z");
+    // 3. sem espaço duplo ao juntar linhas
+    wn_section(splice, strlen(splice), "1.4", out, sizeof out);
+    CHECK_STR(out, "abc zz\n\xE2\x80\xA2 x\n");
+    // 4. linha de exatamente 2047 bytes (o limite do buffer) no fim, sem '\n', e 2046 + "\r\n" são válidas
+    mkpack("r_2047");
+    {
+        static char big[2100];
+        memset(big, 'a', 2047);
+        big[0] = 'k'; big[1] = '\t';
+        write_bytes("r_2047/index.tsv", big, 2047);
+        st_index("r_2047", 0, &r);
+        CHECK(r.bad == 0 && r.listed == 1);
+        big[2046] = '\r'; big[2047] = '\n';
+        write_bytes("r_2047/index.tsv", big, 2048);
+        st_index("r_2047", 0, &r);
+        CHECK(r.bad == 0 && r.listed == 1);
+        memset(big, 'a', 2100);
+        big[0] = 'k'; big[1] = '\t';
+        write_bytes("r_2047/index.tsv", big, 2100);          // passa do buffer: inválida
+        st_index("r_2047", 0, &r);
+        CHECK(r.bad == 1 && r.listed == 0);
+    }
+    // 5. '\0' no meio de uma linha longa não cria entrada fantasma
+    mkpack("r_nul");
+    {
+        static char b[2200];
+        size_t n = 0;
+        b[n++] = 0;
+        memset(b + n, 'q', 2046); n += 2046;
+        memcpy(b + n, "k\tnope.bin\n", 11); n += 11;
+        write_bytes("r_nul/index.tsv", b, n);
+        st_index("r_nul", 0, &r);
+        CHECK(r.listed == 0 && r.missing == 0 && r.bad == 1);
+    }
+    // 6. BOM detectado mesmo com a 1ª linha gigante
+    mkpack("r_bomlong");
+    {
+        static char b[3000];
+        memcpy(b, "\xEF\xBB\xBF", 3);
+        memset(b + 3, 'z', 2990);
+        b[2993] = '\n';
+        write_bytes("r_bomlong/index.tsv", b, 2994);
+        st_index("r_bomlong", 0, &r);
+        CHECK(r.bom && r.bad == 1);
+    }
+    // 7. arquivo "visto" salvo com BOM não faz a tela voltar para sempre
+    write_text("t_seen.txt", "\xEF\xBB\xBF" "1.4\n");
+    char seen[16];
+    wn_seen_read("t_seen.txt", seen, sizeof seen);
+    CHECK_STR(seen, "1.4");
+    CHECK(!wn_should_show(seen, "1.4"));
+    // 8. Markdown: listas com TAB e numeradas, link quebrado, "### " vazio, "## [1.4] - data"
+    const char *m8 = "## [1.4] - 2026-11-25\n###  \n-\ta\n1. b\n10.\tc\nsee [a](b [c](d)e\n";
+    wn_section(m8, strlen(m8), "1.4", out, sizeof out);
+    CHECK_STR(out, "\xE2\x80\xA2 a\n1. b\n10. c see [a](b ce\n");   // "[c](d)e" sí es link: queda "ce"
+}
+
 // ------------------------------------------------------------------ fuzz
 static uint32_t rng = 0x12345678u;
 static uint32_t rnd(void) { rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return rng; }
@@ -293,6 +384,7 @@ int main(int argc, char **argv) {
     test_psarc();
     test_index();
     test_whatsnew();
+    test_regressions();
     fuzz(iters);
     printf("%d/%d verificações ok (fuzz: %d entradas)\n", checks - failures, checks, iters);
     return failures ? 1 : 0;

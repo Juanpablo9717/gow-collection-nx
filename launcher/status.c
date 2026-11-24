@@ -37,6 +37,35 @@ static int name_escapes(const char *s, size_t n) {
     return 0;
 }
 
+enum { LINE_EOF, LINE_OK, LINE_LONG, LINE_NUL };
+
+// Lê uma linha inteira (até '\n' ou fim do arquivo), sem o '\n'. Uma linha maior que o buffer é descartada até o
+// fim (LINE_LONG); uma com '\0' no meio volta como LINE_NUL, porque o texto depois do '\0' não é confiável.
+static int read_line(FILE *f, char *buf, size_t cap, size_t *len) {
+    size_t n = 0;
+    int c, any = 0, over = 0, nul = 0;
+    while ((c = fgetc(f)) != EOF) {
+        any = 1;
+        if (c == '\n') break;
+        if (c == 0) nul = 1;
+        if (n + 1 < cap) buf[n++] = (char)c;
+        else over = 1;
+    }
+    buf[n] = 0;
+    *len = n;
+    return !any ? LINE_EOF : over ? LINE_LONG : nul ? LINE_NUL : LINE_OK;
+}
+
+// Tira do fim uma sequência UTF-8 incompleta (deixada por um corte), para a tela não ler caracteres pela metade.
+static void utf8_trim(char *s) {
+    size_t n = strlen(s), i = n;
+    while (i > 0 && ((unsigned char)s[i - 1] & 0xC0) == 0x80) i--;   // bytes de continuação no fim
+    if (i == 0) return;
+    unsigned char lead = (unsigned char)s[i - 1];
+    size_t need = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1;
+    if (n - (i - 1) < need) s[i - 1] = 0;
+}
+
 static int all_hex(const char *s, size_t n) {
     if (!n) return 0;
     for (size_t i = 0; i < n; i++)
@@ -55,24 +84,16 @@ void st_index(const char *folder, int is_texpack, StIndex *out) {
     out->index = 1;
 
     char line[2048];
-    int first = 1;
-    while (fgets(line, sizeof line, f)) {
-        size_t len = strlen(line);
-        int truncated = len == sizeof line - 1 && line[len - 1] != '\n';
-        if (truncated) {  // linha maior que o buffer: conta como inválida e descarta o resto
-            int c;
-            while ((c = fgetc(f)) != EOF && c != '\n') {}
-            out->bad++;
-            first = 0;
-            continue;
-        }
-        if (len && line[len - 1] == '\n') line[--len] = 0;
-        if (len && line[len - 1] == '\r') line[--len] = 0;
+    int first = 1, kind;
+    size_t len;
+    while ((kind = read_line(f, line, sizeof line, &len)) != LINE_EOF) {
         char *s = line;
         int line_bom = first && len >= 3 && (unsigned char)s[0] == 0xEF && (unsigned char)s[1] == 0xBB &&
                        (unsigned char)s[2] == 0xBF;
         if (line_bom) out->bom = 1;  // não pula: o jogo também não pula, então o nome da 1ª linha fica errado
         first = 0;
+        if (kind == LINE_LONG || kind == LINE_NUL) { out->bad++; continue; }  // maior que o buffer ou com '\0'
+        if (len && line[len - 1] == '\r') line[--len] = 0;
         if (!len || s[0] == '#') continue;
 
         char *tab = memchr(s, '\t', len);
@@ -89,7 +110,10 @@ void st_index(const char *folder, int is_texpack, StIndex *out) {
         char fpath[1024];
         int w = snprintf(fpath, sizeof fpath, "%s/%.*s", folder, (int)file_len, file);
         if (w < 0 || w >= (int)sizeof fpath || !st_file_ok(fpath)) {
-            if (!out->missing) snprintf(out->first_missing, sizeof out->first_missing, "%.*s", (int)file_len, file);
+            if (!out->missing) {
+                snprintf(out->first_missing, sizeof out->first_missing, "%.*s", (int)file_len, file);
+                utf8_trim(out->first_missing);
+            }
             out->missing++;
         }
     }
