@@ -1760,6 +1760,8 @@ static int novidades_preparar(void) {
     int n = wn_paths(i18n_current(), wn_sd_dir[0] ? wn_sd_dir : NULL, romfs_ativo ? "romfs:/changelog" : NULL, cands,
                      WN_MAX_PATHS);
     for (int i = 0; i < n; i++) {
+        // sem romfs, o inglês do SD não substitui notas já preparadas no idioma da interface
+        if (!romfs_ativo && cands[i].english && wn_txt[0] && !wn_recuo) continue;
         size_t len = 0;
         char *md = ler_arquivo(cands[i].path, 256 * 1024, &len);
         if (!md) continue;
