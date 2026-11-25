@@ -16,7 +16,7 @@ OUT = ROOT / "platform" / "nx" / "i18n_data.c"
 FMT = re.compile(r"%[-+ #0]*\d*(?:\.\d+)?(?:hh|h|ll|l|z)?[diouxXsc%]")
 ORDER = ["en", "pt", "es"]  # os primeiros; os demais seguem em ordem alfabética
 SOURCES = ["launcher/main.c", "platform/nx/nx_menu.cpp"]
-AREAS = "common|launcher|options|opt|val|game|trophies|updater|menu"
+AREAS = "common|launcher|options|opt|val|game|trophies|updater|menu|status|whatsnew"
 KEY_LITERAL = re.compile(r'"((?:' + AREAS + r')\.[a-z0-9_]+(?:\.[a-z0-9_]+)*)"')
 
 
@@ -72,6 +72,8 @@ def main():
                 used.update(KEY_LITERAL.findall(line))
     for k in sorted(used - en.keys()):
         problems.append(f"en.ini: falta '{k}', usada no código")
+    for k in sorted(en.keys() - used - {"_name"}):
+        problems.append(f"en.ini: '{k}' não é usada em nenhum lugar do código")
     if problems:
         sys.exit("\n".join(sorted(problems)))
 
