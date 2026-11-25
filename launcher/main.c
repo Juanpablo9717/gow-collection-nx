@@ -1737,6 +1737,7 @@ static char *wn_lang[NUI_LANG];   // changelog de cada idioma da interface, quan
 static size_t wn_lang_len[NUI_LANG];
 static char wn_txt[16384];
 static int wn_marcado = 0;
+static int wn_recuo = 0;          // 1 quando o idioma da interface não tem notas desta versão e elas aparecem em inglês
 
 static char *ler_arquivo(const char *path, size_t max, size_t *len) {
     FILE *f = fopen(path, "rb");
@@ -1768,9 +1769,11 @@ static void novidades_carregar(void) {
 
 // Prepara o texto no idioma atual (com recuo para o inglês). Devolve 1 se há notas para esta versão.
 static int novidades_preparar(void) {
+    wn_recuo = 0;
     if (idioma != UI_EN && wn_lang[idioma] &&
         wn_section(wn_lang[idioma], wn_lang_len[idioma], VERSAO, wn_txt, sizeof wn_txt) > 0)
         return 1;
+    wn_recuo = idioma != UI_EN;
     return wn_md[0] && wn_section(wn_md[0], wn_md_len[0], VERSAO, wn_txt, sizeof wn_txt) > 0;
 }
 
@@ -1829,6 +1832,8 @@ static int desenhar_novidades(int topo) {
     cabecalho();
     char t[96]; snprintf(t, sizeof t, tr("whatsnew.title"), VERSAO);
     negrito(96, 140, 26, OURO, 255, t, 1);
+    // sem notas no idioma escolhido: avisa por que o texto está em inglês
+    if (wn_recuo) texto_dir(W - 96, 138, 16, CINZA, 255, tr("whatsnew.english_only"));
     const int X = 96, Y = 186, LW = W - 96 * 2, LINHAS = 15;
     rrect(X - 20, Y - 20, LW + 40, LINHAS * 28 + 24, 16, PAINEL, 200);
     int total = novidades_desenhar_texto(X, Y + 8, LW, topo, LINHAS);

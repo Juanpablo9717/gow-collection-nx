@@ -312,6 +312,7 @@ const I18nBuiltin i18n_builtins[] = {
     "\n"
     "whatsnew.btn.close = Close\n"
     "whatsnew.btn.scroll = Scroll\n"
+    "whatsnew.english_only = Notes for this version are only available in English\n"
     "whatsnew.dont_show = Don't show again\n"
     "whatsnew.menu = What's new\n"
     "whatsnew.title = WHAT'S NEW IN v%s\n" },
@@ -625,6 +626,7 @@ const I18nBuiltin i18n_builtins[] = {
     "\n"
     "whatsnew.btn.close = Fechar\n"
     "whatsnew.btn.scroll = Rolar\n"
+    "whatsnew.english_only = As notas desta versão só estão em inglês\n"
     "whatsnew.dont_show = Não mostrar de novo\n"
     "whatsnew.menu = Novidades\n"
     "whatsnew.title = NOVIDADES DA v%s\n" },
@@ -938,6 +940,7 @@ const I18nBuiltin i18n_builtins[] = {
     "\n"
     "whatsnew.btn.close = Cerrar\n"
     "whatsnew.btn.scroll = Desplazar\n"
+    "whatsnew.english_only = Las notas de esta versión solo están en inglés\n"
     "whatsnew.dont_show = No volver a mostrar\n"
     "whatsnew.menu = Novedades\n"
     "whatsnew.title = NOVEDADES DE LA v%s\n" },
