@@ -261,6 +261,59 @@ static int utf8_complete(const char *s) {   // 1 se não termina no meio de um c
     return n - (i - 1) >= need;
 }
 
+
+// Junta os caminhos de wn_paths numa string "caminho*|caminho|..." (* = item em inglês com aviso) para comparar fácil.
+static const char *paths_str(const char *code, const char *sd, const char *rom, int max) {
+    static char buf[8192];
+    WnPath p[16];
+    int n = wn_paths(code, sd, rom, p, max);
+    buf[0] = 0;
+    for (int i = 0; i < n; i++) {
+        if (i) strcat(buf, "|");
+        strcat(buf, p[i].path);
+        if (p[i].english) strcat(buf, "*");
+    }
+    return buf;
+}
+
+static void test_wn_paths(void) {
+    // idioma com variante: variante, base e por fim inglês (com aviso); SD antes do embutido
+    CHECK_STR(paths_str("es-419", "sd", "rom", 16),
+              "sd/CHANGELOG.es-419.md|rom/CHANGELOG.es-419.md|sd/CHANGELOG.es.md|rom/CHANGELOG.es.md|"
+              "sd/CHANGELOG.en.md*|rom/CHANGELOG.en.md*");
+    // português também acha o CHANGELOG.md principal; maiúsculas e '_' são normalizados
+    CHECK_STR(paths_str("PT_br", "sd", "rom", 16),
+              "sd/CHANGELOG.pt-br.md|rom/CHANGELOG.pt-br.md|sd/CHANGELOG.pt.md|rom/CHANGELOG.pt.md|rom/CHANGELOG.md|"
+              "sd/CHANGELOG.en.md*|rom/CHANGELOG.en.md*");
+    CHECK_STR(paths_str("pt", NULL, "rom", 16), "rom/CHANGELOG.pt.md|rom/CHANGELOG.md|rom/CHANGELOG.en.md*");
+    // inglês: sem aviso, sem repetir
+    CHECK_STR(paths_str("en", "sd", "rom", 16), "sd/CHANGELOG.en.md|rom/CHANGELOG.en.md");
+    CHECK_STR(paths_str("EN-us", "sd", "rom", 16), "sd/CHANGELOG.en-us.md|rom/CHANGELOG.en-us.md|sd/CHANGELOG.en.md|rom/CHANGELOG.en.md");
+    // idioma só do SD (sem nada no código do launcher)
+    CHECK_STR(paths_str("fr", "sd", "rom", 16), "sd/CHANGELOG.fr.md|rom/CHANGELOG.fr.md|sd/CHANGELOG.en.md*|rom/CHANGELOG.en.md*");
+    // códigos inválidos nunca viram caminho: vão direto para o inglês
+    const char *bad[] = { NULL, "", "../x", "es/../..", "es.md", "e s", "-es", "es\n", "abcdefghijklmnop", "\xC3\xA9s", "%s" };
+    for (size_t i = 0; i < sizeof bad / sizeof *bad; i++)
+        CHECK_STR(paths_str(bad[i], "sd", "rom", 16), "sd/CHANGELOG.en.md*|rom/CHANGELOG.en.md*");
+    CHECK_STR(paths_str("abcdefghijklmno", NULL, "r", 16), "r/CHANGELOG.abcdefghijklmno.md|r/CHANGELOG.en.md*");  // 15: limite
+    CHECK_STR(paths_str("es--", NULL, "r", 16), "r/CHANGELOG.es--.md|r/CHANGELOG.es.md|r/CHANGELOG.en.md*");
+    // sem pastas: nada; limite de itens respeitado
+    CHECK_STR(paths_str("es", NULL, NULL, 16), "");
+    CHECK_STR(paths_str("es", "sd", "rom", 1), "sd/CHANGELOG.es.md");
+    CHECK_STR(paths_str("es", "sd", "rom", 0), "");
+    CHECK(wn_paths("es", "sd", "rom", NULL, 4) == 0);
+    // pasta longa demais: o caminho truncado é pulado, os outros continuam
+    static char longdir[WN_PATH_MAX + 10];
+    memset(longdir, 'a', sizeof longdir - 1);
+    longdir[sizeof longdir - 1] = 0;
+    CHECK_STR(paths_str("es", longdir, "rom", 16), "rom/CHANGELOG.es.md|rom/CHANGELOG.en.md*");
+    longdir[WN_PATH_MAX - 1 - (int)strlen("/CHANGELOG.es.md")] = 0;   // cabe exatamente
+    WnPath p[4];
+    CHECK(wn_paths("es", longdir, NULL, p, 4) == 2 && strlen(p[0].path) == WN_PATH_MAX - 1 && p[1].english);
+    longdir[strlen(longdir)] = 'a';   /* 1 a mais: os dois caminhos deixam de caber */
+    CHECK(wn_paths("es", longdir, NULL, p, 4) == 0);
+}
+
 static void test_regressions(void) {
     char out[64];
     StIndex r;
@@ -385,6 +438,7 @@ int main(int argc, char **argv) {
     test_index();
     test_whatsnew();
     test_regressions();
+    test_wn_paths();
     fuzz(iters);
     printf("%d/%d verificações ok (fuzz: %d entradas)\n", checks - failures, checks, iters);
     return failures ? 1 : 0;

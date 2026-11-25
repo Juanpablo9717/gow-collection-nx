@@ -180,6 +180,51 @@ int wn_section(const char *md, size_t len, const char *version, char *out, size_
     return o.n ? (int)o.n : -1;
 }
 
+// Adiciona "<dir>/<name>" à lista, se houver espaço e o caminho couber.
+static void add_path(WnPath *out, int max, int *n, const char *dir, const char *name, int english) {
+    if (!dir || *n >= max) return;
+    int w = snprintf(out[*n].path, WN_PATH_MAX, "%s/%s", dir, name);
+    if (w < 0 || w >= WN_PATH_MAX) return;
+    out[*n].english = english;
+    (*n)++;
+}
+
+static void add_lang(WnPath *out, int max, int *n, const char *sd_dir, const char *builtin_dir, const char *tag,
+                     int english) {
+    char name[48];
+    snprintf(name, sizeof name, "CHANGELOG.%s.md", tag);
+    add_path(out, max, n, sd_dir, name, english);
+    add_path(out, max, n, builtin_dir, name, english);
+    if (!strcmp(tag, "pt")) add_path(out, max, n, builtin_dir, "CHANGELOG.md", english);
+}
+
+int wn_paths(const char *code, const char *sd_dir, const char *builtin_dir, WnPath *out, int max) {
+    int n = 0;
+    if (!out || max <= 0) return 0;
+    char tag[16] = "", base[16] = "";
+    size_t len = code ? strlen(code) : 0;
+    int ok = len > 0 && len < sizeof tag;
+    for (size_t i = 0; ok && i < len; i++) {
+        unsigned char c = (unsigned char)code[i];
+        if (isalnum(c)) tag[i] = (char)tolower(c);
+        else if (c == '-' || c == '_') tag[i] = '-';
+        else ok = 0;
+    }
+    if (ok) {
+        tag[len] = 0;
+        if (tag[0] == '-') ok = 0;   // "-x" não é código
+    }
+    if (ok) {
+        size_t b = strcspn(tag, "-");
+        memcpy(base, tag, b);
+        base[b] = 0;
+        if (strcmp(tag, "en")) add_lang(out, max, &n, sd_dir, builtin_dir, tag, 0);
+        if (strcmp(base, tag) && strcmp(base, "en")) add_lang(out, max, &n, sd_dir, builtin_dir, base, 0);
+    }
+    add_lang(out, max, &n, sd_dir, builtin_dir, "en", !ok || strcmp(base, "en") != 0);
+    return n;
+}
+
 int wn_should_show(const char *seen, const char *version) {
     char v[64], s[64];
     if (!wn_normalize(version, v, sizeof v) || !strcmp(v, "dev")) return 0;

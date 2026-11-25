@@ -20,6 +20,21 @@ int wn_normalize(const char *in, char *out, size_t cap);
 // Uma linha lógica por '\n'. Devolve o tamanho escrito, ou -1 se a seção não existe ou ficou vazia.
 int wn_section(const char *md, size_t len, const char *version, char *out, size_t cap);
 
+// Onde procurar as notas de um idioma, em ordem de preferência. Com code = "es-419":
+//   <sd_dir>/CHANGELOG.es-419.md, <builtin_dir>/CHANGELOG.es-419.md, <sd_dir>/CHANGELOG.es.md,
+//   <builtin_dir>/CHANGELOG.es.md, e por fim o inglês (<sd_dir>/CHANGELOG.en.md, <builtin_dir>/CHANGELOG.en.md).
+// O português também procura <builtin_dir>/CHANGELOG.md (o changelog principal do projeto é em português).
+// O código vira minúsculas com '-' no lugar de '_'; código vazio ou com caracteres fora de [A-Za-z0-9_-] (ou
+// longo demais) vai direto para o inglês, então nunca vira caminho fora da pasta. Pasta NULL é pulada, e um caminho
+// que não cabe em WN_PATH_MAX também. english = 1 nos itens em inglês quando o idioma pedido não é inglês (para a
+// tela avisar por que o texto está em inglês). Devolve quantos itens escreveu (no máximo max).
+#define WN_PATH_MAX 768
+typedef struct {
+    char path[WN_PATH_MAX];
+    int english;
+} WnPath;
+int wn_paths(const char *code, const char *sd_dir, const char *builtin_dir, WnPath *out, int max);
+
 // 1 se a tela deve aparecer: versão conhecida (não "dev"/vazia) e diferente da última marcada como vista.
 int wn_should_show(const char *seen, const char *version);
 

@@ -1017,7 +1017,6 @@ static void linha_perfil(int x, int y, int w, const char *rotulo, const char *va
 #define BT_ZR "\xEE\x83\xA7"
 static int estado_pode(int i);
 static void texto_corte(int x, int y, int tam, u32 cor, int a, const char *s, int maxw);
-static char *wn_md[2];   // 0 = inglês (CHANGELOG.en.md), 1 = português (CHANGELOG.md)
 static int wn_disponivel;   // há notas da versão instalada no idioma atual (ou em inglês)
 
 static void desenhar(int sel, float cs[N], int ultimo, const char *msg, float fade) {
@@ -1732,9 +1731,7 @@ static void desenhar_estado(int g) {
 // ---------------------------------------------------------------- tela "Novidades"
 // Seção do CHANGELOG da versão instalada (embutido no romfs pelo build), lida para a RAM ao abrir: continua valendo
 // depois do romfsExit() do atualizador. Aparece a cada abertura até marcar "Não mostrar de novo".
-static size_t wn_md_len[2];
-static char *wn_lang[NUI_LANG];   // changelog de cada idioma da interface, quando o build traz
-static size_t wn_lang_len[NUI_LANG];
+static char wn_sd_dir[FS_MAX_PATH];   // data/lang do SD: CHANGELOG.<código>.md ali tem prioridade sobre o embutido
 static char wn_txt[16384];
 static int wn_marcado = 0;
 static int wn_recuo = 0;          // 1 quando o idioma da interface não tem notas desta versão e elas aparecem em inglês
@@ -1753,28 +1750,25 @@ static char *ler_arquivo(const char *path, size_t max, size_t *len) {
     return b;
 }
 
-static void novidades_carregar(void) {
-    if (!romfs_ativo) return;
-    // CHANGELOG.md é o português do projeto; os outros idiomas são CHANGELOG.<código>.md, com o inglês de recuo.
-    wn_md[0] = ler_arquivo("romfs:/changelog/CHANGELOG.en.md", 256 * 1024, &wn_md_len[0]);
-    for (int u = 0; u < NUI_LANG; u++) {
-        if (u == UI_EN) continue;
-        char p[64];
-        if (u == UI_PT) snprintf(p, sizeof p, "romfs:/changelog/CHANGELOG.md");
-        else snprintf(p, sizeof p, "romfs:/changelog/CHANGELOG.%s.md", ui_codigo[u]);
-        wn_lang[u] = ler_arquivo(p, 256 * 1024, &wn_lang_len[u]);
-    }
-    wn_md[1] = wn_lang[UI_PT];
-}
-
-// Prepara o texto no idioma atual (com recuo para o inglês). Devolve 1 se há notas para esta versão.
+// Prepara as notas da versão instalada no idioma atual da interface. Lê só o arquivo necessário (ver wn_paths):
+// primeiro o SD, depois o embutido no romfs, e no fim o inglês. Devolve 1 se há notas para esta versão.
 static int novidades_preparar(void) {
+    // sem romfs (durante a atualização) mantém o que já foi preparado
+    if (!romfs_ativo) return wn_txt[0] != 0;
+    WnPath cands[8];
+    int n = wn_paths(i18n_current(), wn_sd_dir[0] ? wn_sd_dir : NULL, "romfs:/changelog", cands, 8);
     wn_recuo = 0;
-    if (idioma != UI_EN && wn_lang[idioma] &&
-        wn_section(wn_lang[idioma], wn_lang_len[idioma], VERSAO, wn_txt, sizeof wn_txt) > 0)
-        return 1;
-    wn_recuo = idioma != UI_EN;
-    return wn_md[0] && wn_section(wn_md[0], wn_md_len[0], VERSAO, wn_txt, sizeof wn_txt) > 0;
+    wn_txt[0] = 0;
+    for (int i = 0; i < n; i++) {
+        size_t len = 0;
+        char *md = ler_arquivo(cands[i].path, 256 * 1024, &len);
+        if (!md) continue;
+        int ok = wn_section(md, len, VERSAO, wn_txt, sizeof wn_txt) > 0;
+        free(md);
+        if (ok) { wn_recuo = cands[i].english; return 1; }
+    }
+    wn_txt[0] = 0;
+    return 0;
 }
 
 // Divide wn_txt em linhas de tela (com quebra por largura) e devolve o total; desenha a partir da linha topo.
@@ -1920,6 +1914,7 @@ int main(int argc, char **argv) {
     char lang_dir[FS_MAX_PATH];
     snprintf(lang_dir, sizeof lang_dir, "%.700sdata/lang", dir);
     i18n_init(lang_dir);
+    snprintf(wn_sd_dir, sizeof wn_sd_dir, "%s", lang_dir);
     idioma_sistema = detectar_idioma_switch();
     escanear_traducoes();
     opcoes_ler();
@@ -1927,7 +1922,6 @@ int main(int argc, char **argv) {
     musica_iniciar();
     info_ler();
     estado_ler(0);
-    novidades_carregar();
     wn_disponivel = novidades_preparar();
     capas_carregar();
 
