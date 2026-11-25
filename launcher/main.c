@@ -1254,7 +1254,8 @@ static int grau_i(char g) { return g == 'P' ? 0 : g == 'G' ? 1 : g == 'S' ? 2 : 
 // texto cortado em `maxw` pixels (com reticências)
 static void texto_corte(int x, int y, int tam, u32 cor, int a, const char *s, int maxw) {
     if (largura(tam, s, 0) <= maxw) { texto(x, y, tam, cor, a, s); return; }
-    char b[400]; snprintf(b, sizeof b, "%s", s);
+    char b[400];
+    snprintf(b, sizeof b - 3, "%s", s);   // deixa espaço para trocar o fim por "…" (3 bytes) sem passar do buffer
     size_t n = strlen(b);
     while (n > 0) {
         do n--; while (n > 0 && ((unsigned char)b[n] & 0xc0) == 0x80);   // não corta no meio de um caractere UTF-8
@@ -1753,21 +1754,26 @@ static char *ler_arquivo(const char *path, size_t max, size_t *len) {
 // Prepara as notas da versão instalada no idioma atual da interface. Lê só o arquivo necessário (ver wn_paths):
 // primeiro o SD, depois o embutido no romfs, e no fim o inglês. Devolve 1 se há notas para esta versão.
 static int novidades_preparar(void) {
-    // sem romfs (durante a atualização) mantém o que já foi preparado
-    if (!romfs_ativo) return wn_txt[0] != 0;
-    WnPath cands[8];
-    int n = wn_paths(i18n_current(), wn_sd_dir[0] ? wn_sd_dir : NULL, "romfs:/changelog", cands, 8);
-    wn_recuo = 0;
-    wn_txt[0] = 0;
+    // Sem romfs (durante a atualização) só o SD pode ser lido; se nada servir, mantém o texto já preparado.
+    static char tmp[sizeof wn_txt];
+    WnPath cands[WN_MAX_PATHS];
+    int n = wn_paths(i18n_current(), wn_sd_dir[0] ? wn_sd_dir : NULL, romfs_ativo ? "romfs:/changelog" : NULL, cands,
+                     WN_MAX_PATHS);
     for (int i = 0; i < n; i++) {
         size_t len = 0;
         char *md = ler_arquivo(cands[i].path, 256 * 1024, &len);
         if (!md) continue;
-        int ok = wn_section(md, len, VERSAO, wn_txt, sizeof wn_txt) > 0;
+        int ok = wn_section(md, len, VERSAO, tmp, sizeof tmp) > 0;
         free(md);
-        if (ok) { wn_recuo = cands[i].english; return 1; }
+        if (ok) {
+            memcpy(wn_txt, tmp, sizeof wn_txt);
+            wn_recuo = cands[i].english;
+            return 1;
+        }
     }
+    if (!romfs_ativo) return wn_txt[0] != 0;
     wn_txt[0] = 0;
+    wn_recuo = 0;
     return 0;
 }
 
@@ -2005,7 +2011,7 @@ int main(int argc, char **argv) {
             if (k & (HidNpadButton_R | HidNpadButton_ZR)) e_jogo = (e_jogo + 1) % N;
             if (k & (HidNpadButton_L | HidNpadButton_ZL)) e_jogo = (e_jogo + N - 1) % N;
             if (k & HidNpadButton_Y) { estado_ler(1); info_ler(); }
-            if ((k & HidNpadButton_ZL) && wn_disponivel && novidades_preparar()) { tela_est = 0; tela_nov = 1; n_topo = 0; }
+            if ((k & HidNpadButton_ZL) && wn_disponivel && (wn_disponivel = novidades_preparar())) { tela_est = 0; tela_nov = 1; n_topo = 0; }
             if (k & (HidNpadButton_B | HidNpadButton_Plus)) tela_est = 0;
             if (k || tick % 60 == 0) sujo = 1;
             if (sujo && tela_est) { px = quadro, pitch = W; desenhar_estado(e_jogo); sujo = 0; }
@@ -2107,7 +2113,7 @@ int main(int argc, char **argv) {
         if (k & HidNpadButton_Y) { tela_op = 1; sel_op = 0; msg = msg_hb; sujo = 1; continue; }
         if (k & HidNpadButton_X) { tela_trof = 1; t_jogo = sel; t_sel = t_topo = 0; sujo = 1; continue; }
         if (k & HidNpadButton_ZR) { estado_ler(1); tela_est = 1; e_jogo = sel; sujo = 1; continue; }
-        if ((k & HidNpadButton_ZL) && wn_disponivel && novidades_preparar()) { tela_nov = 1; n_topo = 0; sujo = 1; continue; }
+        if ((k & HidNpadButton_ZL) && wn_disponivel && (wn_disponivel = novidades_preparar())) { tela_nov = 1; n_topo = 0; sujo = 1; continue; }
 #ifdef ENABLE_UPDATER
         if (k & HidNpadButton_Minus) {
             if (st.state != UPD_AVAILABLE && st.state != UPD_CHECKING) upd_start_check(VERSAO);

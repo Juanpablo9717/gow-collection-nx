@@ -312,6 +312,24 @@ static void test_wn_paths(void) {
     CHECK(wn_paths("es", longdir, NULL, p, 4) == 2 && strlen(p[0].path) == WN_PATH_MAX - 1 && p[1].english);
     longdir[strlen(longdir)] = 'a';   /* 1 a mais: os dois caminhos deixam de caber */
     CHECK(wn_paths("es", longdir, NULL, p, 4) == 0);
+    // achados da auditoria
+    CHECK_STR(paths_str("es-", "sd", "rom", 16), "sd/CHANGELOG.es-.md|rom/CHANGELOG.es-.md|sd/CHANGELOG.es.md|rom/CHANGELOG.es.md|"
+                                                  "sd/CHANGELOG.en.md*|rom/CHANGELOG.en.md*");
+    CHECK_STR(paths_str("en_", "sd", "rom", 16), "sd/CHANGELOG.en-.md|rom/CHANGELOG.en-.md|sd/CHANGELOG.en.md|rom/CHANGELOG.en.md");
+    CHECK_STR(paths_str("-", "sd", "rom", 16), "sd/CHANGELOG.en.md*|rom/CHANGELOG.en.md*");
+    CHECK_STR(paths_str("es", "", "rom", 16), "rom/CHANGELOG.es.md|rom/CHANGELOG.en.md*");   // pasta vazia não vira a raiz
+    CHECK_STR(paths_str("es", "sd", "", 16), "sd/CHANGELOG.es.md|sd/CHANGELOG.en.md*");
+    CHECK_STR(paths_str("pt", "sd", "rom", 3), "sd/CHANGELOG.pt.md|rom/CHANGELOG.pt.md|rom/CHANGELOG.md");  // corta sem estourar
+    // o pior caso cabe em WN_MAX_PATHS (o launcher usa esse tamanho): nada se perde, nem o inglês do fim
+    WnPath w[WN_MAX_PATHS + 4];
+    int nw = wn_paths("pt-br", "sd", "rom", w, WN_MAX_PATHS + 4);
+    CHECK(nw <= WN_MAX_PATHS && nw == 7 && !strcmp(w[nw - 1].path, "rom/CHANGELOG.en.md") && w[nw - 1].english);
+    // wn_section sem a versão (ou com a seção vazia) devolve -1 e deixa a saída vazia: nada de texto velho entre tentativas
+    char o[64] = "lixo";
+    const char *sem = "## v1.3\n- a\n", *vazia = "## v1.4\n\n## v1.3\n- a\n";
+    CHECK(wn_section(sem, strlen(sem), "1.4", o, sizeof o) == -1 && o[0] == 0);
+    strcpy(o, "lixo");
+    CHECK(wn_section(vazia, strlen(vazia), "1.4", o, sizeof o) == -1 && o[0] == 0);
 }
 
 static void test_regressions(void) {

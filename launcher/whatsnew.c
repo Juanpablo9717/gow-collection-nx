@@ -182,7 +182,7 @@ int wn_section(const char *md, size_t len, const char *version, char *out, size_
 
 // Adiciona "<dir>/<name>" à lista, se houver espaço e o caminho couber.
 static void add_path(WnPath *out, int max, int *n, const char *dir, const char *name, int english) {
-    if (!dir || *n >= max) return;
+    if (!dir || !*dir || *n >= max) return;   // pasta vazia viraria "/CHANGELOG..." na raiz
     int w = snprintf(out[*n].path, WN_PATH_MAX, "%s/%s", dir, name);
     if (w < 0 || w >= WN_PATH_MAX) return;
     out[*n].english = english;

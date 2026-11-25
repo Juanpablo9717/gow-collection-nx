@@ -25,10 +25,11 @@ int wn_section(const char *md, size_t len, const char *version, char *out, size_
 //   <builtin_dir>/CHANGELOG.es.md, e por fim o inglês (<sd_dir>/CHANGELOG.en.md, <builtin_dir>/CHANGELOG.en.md).
 // O português também procura <builtin_dir>/CHANGELOG.md (o changelog principal do projeto é em português).
 // O código vira minúsculas com '-' no lugar de '_'; código vazio ou com caracteres fora de [A-Za-z0-9_-] (ou
-// longo demais) vai direto para o inglês, então nunca vira caminho fora da pasta. Pasta NULL é pulada, e um caminho
+// longo demais) vai direto para o inglês, então nunca vira caminho fora da pasta. Pasta NULL ou vazia é pulada, e um caminho
 // que não cabe em WN_PATH_MAX também. english = 1 nos itens em inglês quando o idioma pedido não é inglês (para a
 // tela avisar por que o texto está em inglês). Devolve quantos itens escreveu (no máximo max).
 #define WN_PATH_MAX 768
+#define WN_MAX_PATHS 8   // pior caso hoje: 7 ("pt-br": variante e base no SD e no romfs, CHANGELOG.md e o inglês x2)
 typedef struct {
     char path[WN_PATH_MAX];
     int english;
