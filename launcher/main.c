@@ -1793,6 +1793,7 @@ static int novidades_desenhar_texto(int x, int y, int w, int topo, int max_linha
         const int titulo = par[0] == '\x01';
         const char *t = titulo ? par + 1 : par;
         const int tam = titulo ? 21 : 17;
+        if (titulo && linha) linha++;   // respiro antes do subtítulo: ele fica junto da lista que abre
         // conta as linhas deste parágrafo desenhando fora da tela quando ainda não chegou no topo
         char resto[1024];
         snprintf(resto, sizeof resto, "%s", t);
@@ -1813,7 +1814,7 @@ static int novidades_desenhar_texto(int x, int y, int w, int topo, int max_linha
             if (!n) { const char *e = q; while (*e && *e != ' ') e++; ult = (size_t)(e - q); n = ult < sizeof l ? ult : sizeof l - 1; }
             memcpy(l, q, n); l[n] = 0;
             if (linha >= topo && linha < topo + max_linhas) {
-                const int yy = y + (linha - topo) * 28 + (titulo ? 6 : 0);
+                const int yy = y + (linha - topo) * 28 + (titulo ? 4 : 0);
                 const int indent = (!titulo && q != resto && !strncmp(resto, "\xE2\x80\xA2", 3)) ? 24 : 0;
                 if (titulo) negrito(x, yy, tam, OURO, 255, l, 0);
                 else texto_corte(x + indent, yy, tam, BRANCO, 240, l, w - indent);
@@ -1821,7 +1822,6 @@ static int novidades_desenhar_texto(int x, int y, int w, int topo, int max_linha
             linha++;
             q += ult; while (*q == ' ') q++;
         }
-        if (titulo) linha++;   // respiro depois do subtítulo
         s += len;
         if (*s == '\n') s++;
     }
