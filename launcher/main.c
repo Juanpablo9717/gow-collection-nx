@@ -1172,8 +1172,13 @@ static void desenhar_opcoes(int aba, int sel, const char *msg) {
         x += w + 60;
     }
     texto(x - 14, 140, 26, CINZA, 230, BT_R);
+    // aviso à direita das abas; em idiomas com textos longos diminui e, se ainda não couber, corta com "…"
+    // em vez de passar por cima do botão R
     const char *aviso = tr("options.note_both_games");
-    texto_dir(W - X, 138, 16, CINZA_ESC, 255, aviso);
+    const int livre = (W - X) - (x + 30);
+    if (largura(16, aviso, 0) <= livre) texto_dir(W - X, 138, 16, CINZA_ESC, 255, aviso);
+    else if (largura(14, aviso, 0) <= livre) texto_dir(W - X, 138, 14, CINZA_ESC, 255, aviso);
+    else if (livre > 40) texto_corte(x + 30, 138, 14, CINZA_ESC, 255, aviso, livre);
 
     // lista
     int lista[NOP], n = itens_da_aba(aba, lista);
@@ -1634,6 +1639,37 @@ static void estado_ler(int extras) {
 static int estado_pode(int i) { return !est_bloqueia[i] && !est_sistema_bloqueia; }
 
 // Desenha uma seção até y_max; o que não couber vira "…" no fim (nunca invade o rodapé).
+// Traço com antisserrilhado (distância do pixel ao segmento): para desenhar ✓ e ✗, que a fonte do sistema não tem.
+static void traco(float x0, float y0, float x1, float y1, float esp, u32 cor, int a) {
+    float r = esp / 2, dx = x1 - x0, dy = y1 - y0, l2 = dx * dx + dy * dy;
+    int xa = (int)floorf(fminf(x0, x1) - r - 1), xb = (int)ceilf(fmaxf(x0, x1) + r + 1);
+    int ya = (int)floorf(fminf(y0, y1) - r - 1), yb = (int)ceilf(fmaxf(y0, y1) + r + 1);
+    for (int y = ya; y <= yb; y++)
+        for (int x = xa; x <= xb; x++) {
+            float px_ = x + .5f - x0, py_ = y + .5f - y0, t = l2 > 0 ? (px_ * dx + py_ * dy) / l2 : 0;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            float ex = px_ - t * dx, ey = py_ - t * dy, c = r - sqrtf(ex * ex + ey * ey) + .5f;
+            if (c > 0) mistura(x, y, cor, (int)(a * (c > 1 ? 1 : c)));
+        }
+}
+
+// Ícone de estado: círculo da cor do nível com o símbolo dentro. (cx, cy) é o centro.
+static void est_icone(int cx, int cy, int nivel, u32 cor) {
+    const int d = 22, x = cx - d / 2, y = cy - d / 2;
+    if (nivel == EST_NADA) { rborda(x, y, d, d, d / 2, 2, cor, 255); traco(cx - 5, cy, cx + 5, cy, 2.5f, cor, 255); return; }
+    rrect(x, y, d, d, d / 2, cor, 255);
+    if (nivel == EST_OK) {
+        traco(cx - 5.5f, cy + .5f, cx - 1.5f, cy + 4.5f, 2.8f, FUNDO, 255);
+        traco(cx - 1.5f, cy + 4.5f, cx + 5.5f, cy - 4, 2.8f, FUNDO, 255);
+    } else if (nivel == EST_ERRO) {
+        traco(cx - 4.5f, cy - 4.5f, cx + 4.5f, cy + 4.5f, 2.8f, BRANCO, 255);
+        traco(cx - 4.5f, cy + 4.5f, cx + 4.5f, cy - 4.5f, 2.8f, BRANCO, 255);
+    } else {   // aviso: "!"
+        traco(cx, cy - 6, cx, cy + 1.5f, 3, FUNDO, 255);
+        traco(cx, cy + 5.5f, cx, cy + 5.6f, 3.2f, FUNDO, 255);
+    }
+}
+
 static int est_lista_desenhar(int x, int y, int w, const char *titulo, const EstLista *l, int y_max) {
     texto_e(x, y, 14, CINZA, 235, titulo, 3);
     int wl = largura(14, titulo, 3);
@@ -1645,11 +1681,10 @@ static int est_lista_desenhar(int x, int y, int w, const char *titulo, const Est
             texto(x + 34, y + 16, 16, CINZA, 240, "…");
             return y + 22;
         }
-        static const char *const icone[] = { "✓", "!", "✗", "–" };
         const u32 cor = e->nivel == EST_OK ? VERDE : e->nivel == EST_AVISO ? OURO : e->nivel == EST_ERRO ? VERMELHO : CINZA_ESC;
         if (e->rotulo[0]) {
             y += 8;
-            negrito(x + 4, y + 18, 20, cor, 255, icone[e->nivel], 0);
+            est_icone(x + 12, y + 11, e->nivel, cor);
             texto_corte(x + 34, y + 18, 19, BRANCO, 250, e->rotulo, w - 34);
             y += 24;
         }
@@ -1682,7 +1717,7 @@ static void desenhar_estado(int g) {
     // esquerda: o que é do jogo (obrigatório e extras); direita: console e shaders, que valem para os dois
     const int y_max = 664;
     int yl = est_lista_desenhar(96, 196, col, tr("status.section.game"), &est_jogo[g], y_max);
-    est_lista_desenhar(96, yl + 18, col, tr("status.section.extras"), &est_extras[g], y_max);
+    est_lista_desenhar(96, yl + 40, col, tr("status.section.extras"), &est_extras[g], y_max);
     est_lista_desenhar(96 + col + 48, 196, col, tr("status.section.system"), &est_sistema, y_max);
 
     linha_h(48, 676, W - 96, OURO_ESC, 140);
